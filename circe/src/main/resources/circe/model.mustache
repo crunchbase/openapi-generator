@@ -1,0 +1,59 @@
+{{>licenseInfo}}
+
+// scalastyle:off
+// format: OFF
+package {{modelPackage}}
+
+{{#imports}}import {{import}}
+{{/imports}}
+
+import io.circe._
+import io.circe.generic.semiauto._
+
+import {{classname}}._
+
+{{#models}}
+{{#model}}
+case class {{classname}}(
+{{#vars}}
+  {{#isEnum}}
+    {{^isListContainer}}
+  {{{name}}}: {{^required}}Option[{{/required}}{{classname}}.{{nameInCamelCase}}{{^required}}]{{/required}}{{^-last}},{{/-last}}
+    {{/isListContainer}}
+    {{#isListContainer}}
+  {{{name}}}: {{^required}}Option[{{/required}}Seq[{{classname}}.{{enumName}}]{{^required}}]{{/required}}{{^-last}},{{/-last}}
+    {{/isListContainer}}
+  {{/isEnum}}
+  {{^isEnum}}
+  {{{name}}}: {{^required}}Option[{{/required}}{{datatype}}{{^required}}]{{/required}}{{^-last}},{{/-last}}
+  {{/isEnum}}
+{{/vars}}
+)
+
+object {{classname}} {
+{{#vars}}
+  {{#isEnum}}
+  sealed abstract class {{nameInCamelCase}}(val value: String)
+  import {{nameInCamelCase}}._
+
+  object {{nameInCamelCase}} {
+    {{#allowableValues}}{{#values}}case object {{#titlecase}}{{{.}}}{{/titlecase}} extends {{nameInCamelCase}}("{{.}}")
+    {{/values}}{{/allowableValues}}
+    implicit val {{name}}Encoder: Encoder[{{nameInCamelCase}}] = new Encoder[{{nameInCamelCase}}] {
+      final def apply(a: {{nameInCamelCase}}): Json = Json.fromString(a.value)
+    }
+
+    implicit val {{name}}Decoder: Decoder[{{nameInCamelCase}}] = (hCursor: HCursor) =>
+      hCursor.as[String].flatMap {
+        {{#allowableValues}}{{#values}}case "{{.}}" => Right({{#titlecase}}{{.}}{{/titlecase}})
+        {{/values}}{{/allowableValues}}case _ => Left(DecodingFailure.fromThrowable(new RuntimeException("Unknown {{name}}"), List.empty))
+      }
+  }
+  {{/isEnum}}
+{{/vars}}
+
+  implicit val {{className}}Encoder: Encoder[{{classname}}] = deriveEncoder
+  implicit val {{className}}Decoder: Decoder[{{classname}}] = deriveDecoder
+}
+{{/model}}
+{{/models}}
