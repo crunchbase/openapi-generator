@@ -791,15 +791,36 @@ public class ModelUtils {
         return getSchemaFromContent(response.getContent());
     }
 
+    /**
+     * Return the first Schema from a specified OAS 'content' section.
+     * 
+     * For example, given the following OAS, this method returns the schema
+     * for the 'application/json' content type because it is listed first in the OAS.
+     * 
+     * responses:
+     *   '200':
+     *     content:
+     *       application/json:
+     *         schema:
+     *           $ref: '#/components/schemas/XYZ'
+     *       application/xml:
+     *          ...
+     *   
+     * @param content a 'content' section in the OAS specification. 
+     * @return the Schema.
+     */
     private static Schema getSchemaFromContent(Content content) {
         if (content == null || content.isEmpty()) {
             return null;
         }
+        Map.Entry<String, MediaType> entry = content.entrySet().iterator().next();
         if (content.size() > 1) {
-            LOGGER.warn("Multiple schemas found in content, returning only the first one");
+            // Other content types are currently ignored by codegen. If you see this warning,
+            // reorder the OAS spec to put the desired content type first.
+            LOGGER.warn("Multiple schemas found in the OAS 'content' section, returning only the first one ({})",
+                entry.getKey());
         }
-        MediaType mediaType = content.values().iterator().next();
-        return mediaType.getSchema();
+        return entry.getValue().getSchema();
     }
 
     /**
@@ -921,8 +942,28 @@ public class ModelUtils {
     }
 
     /**
-     * Get the parent model name from the schemas (allOf, anyOf, oneOf).
-     * If there are multiple parents, return the first one.
+     * Get the parent model name from the composed schema (allOf, anyOf, oneOf).
+     * It traverses the OAS model (possibly resolving $ref) to determine schemas
+     * that specify a determinator.
+     * If there are multiple elements in the composed schema and it is not clear
+     * which one should be the parent, return null.
+     *
+     * For example, given the following OAS spec, the parent of 'Dog' is Animal
+     * because 'Animal' specifies a discriminator.
+     *
+     * animal:
+     *   type: object
+     *   discriminator:
+     *     propertyName: type
+     *   properties:
+     *     type: string
+     *
+     * dog:
+     *   allOf:
+     *      - $ref: '#/components/schemas/animal'
+     *      - type: object
+     *        properties:
+     *          breed: string
      *
      * @param composedSchema schema (alias or direct reference)
      * @param allSchemas     all schemas
@@ -931,7 +972,7 @@ public class ModelUtils {
     public static String getParentName(ComposedSchema composedSchema, Map<String, Schema> allSchemas) {
         List<Schema> interfaces = getInterfaces(composedSchema);
 
-        List<String> refedParentNames = new ArrayList<>();
+        List<String> refedWithoutDiscriminator = new ArrayList<>();
 
         if (interfaces != null && !interfaces.isEmpty()) {
             for (Schema schema : interfaces) {
@@ -946,9 +987,8 @@ public class ModelUtils {
                         // discriminator.propertyName is used
                         return parentName;
                     } else {
-                        LOGGER.debug("Not a parent since discriminator.propertyName is not set {}", s.get$ref());
                         // not a parent since discriminator.propertyName is not set
-                        refedParentNames.add(parentName);
+                        refedWithoutDiscriminator.add(parentName);
                     }
                 } else {
                     // not a ref, doing nothing
@@ -957,10 +997,11 @@ public class ModelUtils {
         }
 
         // parent name only makes sense when there is a single obvious parent
-        if (refedParentNames.size() == 1) {
+        if (refedWithoutDiscriminator.size() == 1) {
             LOGGER.warn("[deprecated] inheritance without use of 'discriminator.propertyName' is deprecated " +
-                    "and will be removed in a future release. Generating model for {}", composedSchema.getName());
-            return refedParentNames.get(0);
+                "and will be removed in a future release. Generating model for composed schema name: {}. Title: {}",
+                composedSchema.getName(), composedSchema.getTitle());
+            return refedWithoutDiscriminator.get(0);
         }
 
         return null;
@@ -977,6 +1018,7 @@ public class ModelUtils {
     public static List<String> getAllParentsName(ComposedSchema composedSchema, Map<String, Schema> allSchemas, boolean includeAncestors) {
         List<Schema> interfaces = getInterfaces(composedSchema);
         List<String> names = new ArrayList<String>();
+        List<String> refedWithoutDiscriminator = new ArrayList<>();
 
         if (interfaces != null && !interfaces.isEmpty()) {
             for (Schema schema : interfaces) {
@@ -994,13 +1036,19 @@ public class ModelUtils {
                             names.addAll(getAllParentsName((ComposedSchema) s, allSchemas, true));
                         }
                     } else {
-                        LOGGER.debug("Not a parent since discriminator.propertyName is not set {}", s.get$ref());
                         // not a parent since discriminator.propertyName is not set
+                        refedWithoutDiscriminator.add(parentName);
                     }
                 } else {
                     // not a ref, doing nothing
                 }
             }
+        }
+
+        if (names.size() == 0 && refedWithoutDiscriminator.size() == 1) {
+            LOGGER.warn("[deprecated] inheritance without use of 'discriminator.propertyName' is deprecated " +
+                    "and will be removed in a future release. Generating model for {}. Title: {}", composedSchema.getName(), composedSchema.getTitle());
+            return refedWithoutDiscriminator;
         }
 
         return names;
